@@ -1,0 +1,27 @@
+name: Security Scan
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  security:
+    uses: ./.github/workflows/reusable-security-scan.yml
+    permissions:
+      contents: read
+      security-events: write
+    with:
+      python-version: "3.12"
+      fail-on-severity: true
+      summary-json-path: artifacts/summary.json
+      sarif-path: artifacts/findings.sarif
+    secrets:
+      github-token: ${{ secrets.GITHUB_TOKEN }}

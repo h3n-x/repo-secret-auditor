@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environment
+.venv/
+
+# Editor / OS
+.DS_Store
+.vscode/
+
+# AI planning artifacts (local only)
+plan/
+spec/
+docs/interview/
+docs/roadmap/implementation-plan-21-days.md
+
+# Build metadata
+src/*.egg-info/
+
+# Local runtime/test databases
+*.db
+
+# Local test/coverage artifacts
+.coverage
+artifacts/

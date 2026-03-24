@@ -1,0 +1,119 @@
+name: Reusable Security Scan
+
+on:
+  workflow_call:
+    inputs:
+      python-version:
+        description: Python version used for scan runtime
+        required: false
+        type: string
+        default: "3.12"
+      fail-on-severity:
+        description: Fail workflow if HIGH or CRITICAL findings exist
+        required: false
+        type: boolean
+        default: true
+      summary-json-path:
+        description: Relative path to generated summary JSON
+        required: false
+        type: string
+        default: "artifacts/summary.json"
+      sarif-path:
+        description: Relative path to generated SARIF report
+        required: false
+        type: string
+        default: "artifacts/findings.sarif"
+    secrets:
+      github-token:
+        required: true
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  security-scan:
+    name: Secret and Dependency Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Cache pip
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements*.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Prepare runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 --version
+          python3 -m pip install --upgrade pip
+          if [[ -f requirements.txt ]]; then
+            python3 -m pip install -r requirements.txt
+          fi
+
+      - name: Run security scan command
+        id: scan
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+
+          if [[ ! -f scripts/run_security_scan.py ]]; then
+            echo "scripts/run_security_scan.py not found. Cannot continue."
+            exit 1
+          fi
+
+          python3 scripts/run_security_scan.py \
+            --project-root . \
+            --summary "${{ inputs.summary-json-path }}" \
+            --sarif "${{ inputs.sarif-path }}"
+
+      - name: Validate outputs exist
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f "${{ inputs.summary-json-path }}"
+          test -f "${{ inputs.sarif-path }}"
+
+      - name: Publish scan artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: security-scan-artifacts
+          path: |
+            ${{ inputs.summary-json-path }}
+            ${{ inputs.sarif-path }}
+          retention-days: 14
+
+      - name: Upload SARIF to GitHub code scanning
+        uses: github/codeql-action/upload-sarif@d3678e237b9c32a6c9bffb3315c335f976f3549f # v3.30.2
+        with:
+          sarif_file: ${{ inputs.sarif-path }}
+          token: ${{ secrets.github-token }}
+
+      - name: Enforce severity gate
+        if: ${{ inputs.fail-on-severity }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          CRITICAL_COUNT=$(jq -r '.critical_count // 0' "${{ inputs.summary-json-path }}")
+          HIGH_COUNT=$(jq -r '.high_count // 0' "${{ inputs.summary-json-path }}")
+          echo "critical_count=${CRITICAL_COUNT}"
+          echo "high_count=${HIGH_COUNT}"
+          if [[ "${CRITICAL_COUNT}" -gt 0 || "${HIGH_COUNT}" -gt 0 ]]; then
+            echo "Security gate failed: HIGH/CRITICAL findings detected."
+            exit 1
+          fi
+
+      - name: Print summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Security scan summary:"
+          cat "${{ inputs.summary-json-path }}"

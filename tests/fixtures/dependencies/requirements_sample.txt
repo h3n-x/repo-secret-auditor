@@ -1,0 +1,6 @@
+# Python dependencies fixture
+fastapi==0.116.0
+requests[socks]==2.32.3 ; python_version >= "3.10"
+# Unsupported, should be ignored
+-r base.txt
+git+https://github.com/example/private-repo.git
