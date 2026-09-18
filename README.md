@@ -2,12 +2,13 @@
 
 [![Python Version](https://img.shields.io/badge/python-3.12%20%7C%203.13%20%7C%203.14-blue.svg)](https://www.python.org/)
 [![Security Audit](https://img.shields.io/badge/pip--audit-0%20CVEs%20clean-brightgreen.svg)](https://pypi.org/project/pip-audit/)
-[![Coverage](https://img.shields.io/badge/coverage-90%25-success.svg)](tests/)
+[![Coverage](https://img.shields.io/badge/coverage-91%25-success.svg)](tests/)
 [![SARIF](https://img.shields.io/badge/SARIF-2.1.0%20OASIS-orange.svg)](https://sarifweb.azurewebsites.net/)
+[![CycloneDX](https://img.shields.io/badge/CycloneDX-1.5%20SBOM-blueviolet.svg)](https://cyclonedx.org/)
 [![GitHub Code Scanning](https://img.shields.io/badge/GitHub%20Code%20Scanning-Ready-blue.svg)](https://docs.github.com/en/code-security/code-scanning)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Backend de escaneo estático de seguridad de código abierto diseñado para auditar repositorios en pipelines de CI/CD: detección de secretos de alta fidelidad (compatible con reglas Gitleaks TOML), análisis de vulnerabilidades en dependencias mediante Google OSV Batch API, y exportación en formato estándar **SARIF 2.1.0** para integración nativa con **GitHub Code Scanning Alerts**.
+Backend de escaneo estático de seguridad de código abierto diseñado para auditar repositorios en pipelines de CI/CD: detección de secretos de alta fidelidad (compatible con reglas Gitleaks TOML), escaneo de historial de commits pasados (`--history`), análisis de vulnerabilidades en dependencias mediante Google OSV Batch API, supresiones estructuradas con `.rsa-baseline.json`, exportación de SBOM en **CycloneDX 1.5 JSON** y exportación en formato estándar **SARIF 2.1.0** para integración nativa con **GitHub Code Scanning Alerts**.
 
 ---
 
@@ -17,12 +18,15 @@ Backend de escaneo estático de seguridad de código abierto diseñado para audi
 flowchart TD
     subgraph Input["Entrada de Código & Lockfiles"]
         SRC["Código Fuente / .env / Config"]
-        LOCK["requirements.txt / poetry.lock / package-lock.json"]
+        HIST["Historial de Commits Git (git log -p)"]
+        LOCK["requirements.txt / poetry.lock / package-lock.json / pyproject.toml"]
+        BASE[".rsa-baseline.json (Supresiones / Riesgo Aceptado)"]
     end
 
     subgraph CoreEngine["Motor de Auditoría"]
         SEC["Motor de Secretos<br/>(Reglas TOML Gitleaks + Entropía Shannon)"]
-        DEP["Motor de Dependencias<br/>(Parser Multi-Ecosistema)"]
+        GWALK["Git Diff History Walker<br/>(Atribución de Commit SHA y Autor)"]
+        DEP["Motor de Dependencias<br/>(Parser Multi-Ecosistema PEP 621 / npm / Poetry)"]
         OSV["Cliente OSV Batch<br/>(api.osv.dev/v1/querybatch)"]
         CVSS["Calculador Algorítmico CVSS v3.1<br/>(Vector Score Parsing)"]
     end
@@ -34,14 +38,19 @@ flowchart TD
 
     subgraph Reporting["Salida Estructurada & CI Gate"]
         SARIF["Reporte SARIF 2.1.0 (OASIS)"]
+        SBOM["CycloneDX 1.5 JSON SBOM (PURLs)"]
         SUM["Resumen JSON / Risk Score"]
         GH["GitHub Code Scanning Alerts"]
         GATE{"Security Policy Gate<br/>(Fail on HIGH/CRITICAL)"}
     end
 
     SRC --> SEC
+    HIST --> GWALK
+    GWALK --> SEC
+    BASE -.-> SEC
     LOCK --> DEP
     DEP --> OSV
+    DEP --> SBOM
     OSV --> CVSS
     CVSS --> SUM
     SEC --> SUM
@@ -55,7 +64,8 @@ flowchart TD
 
 ## ✨ Capacidades Clave
 
-### 1. Detección de Secretos de Alta Precisión
+### 1. Detección de Secretos y Escaneo Histórico
+- **Escaneo Profundo de Commits (`--history`)**: Analiza la historia completa del repositorio (`git log -p`), detectando credenciales que fueron introducidas y posteriormente "borradas" en commits subsecuentes, extrayendo el SHA, fecha y autor.
 - **Motor basado en TOML (compatible con Gitleaks)**: Carga y compila reglas estandarizadas desde [`src/app/scanner/rules.toml`](src/app/scanner/rules.toml).
 - **Catálogo de reglas curadas**:
   - Claves privadas (RSA, OpenSSH, EC, PGP, DSA).
@@ -66,15 +76,17 @@ flowchart TD
   - OpenAI / Anthropic API Keys (`sk-`, `sk-proj-`).
   - JSON Web Tokens (JWT) y Bearer tokens.
   - GitHub PATs clásicos y Fine-Grained (`ghp_`, `github_pat_`, etc.).
+- **Mecanismo de Línea Base (`.rsa-baseline.json`)**: Permite registrar hallazgos conocidos o riesgos aceptados con hash de evidencia y fecha de expiración opcional para no romper el pipeline de CI.
 - **Filtro de Entropía de Shannon**: Análisis de aleatoriedad por juego de caracteres para descartar tokens triviales.
 - **Filtrado de placeholders**: Ignora de forma automática ejemplos y variables de documentación (`EXAMPLE`, `PLACEHOLDER`, `YOUR_KEY`, `DUMMY`).
 - **Zero-Knowledge Evidence**: Los secretos nunca se imprimen en texto plano en reportes SARIF ni logs; se genera un hash SHA-256 no reversible como identificador de evidencia.
 
-### 2. Auditoría de Dependencias Multi-Ecosistema
+### 2. Auditoría de Dependencias y Exportación SBOM
 - **Soporte de Lockfiles Modernos**:
-  - Python: `requirements.txt` (rangos `>=`, `<=`, `~=`, `>`, `<`, `==`, con stripping de comentarios y markers) y `poetry.lock` (formato TOML).
+  - Python: `requirements.txt`, `pyproject.toml` (PEP 621) y `poetry.lock` (formato TOML).
   - Node.js: `package-lock.json` (formatos v1, v2 y v3 con árboles anidados).
-- **Consultas por Lotes en Google OSV (`/v1/querybatch`)**: Una sola petición HTTP resuelve hasta 1,000 paquetes concurrentemente en < 1.5s.
+- **Exportador CycloneDX 1.5 JSON SBOM**: Genera el inventario formal de componentes de software con Package URLs (PURL) estándar (`pkg:pypi/...`, `pkg:npm/...`).
+- **Consultas por Lotes en Google OSV (`/v1/querybatch`)**: Una sola petición HTTP resuelve paquetes concurrentemente en < 1.5s.
 - **Parser Algorítmico CVSS v3.1**: Calcula matemáticamente el score base a partir del vector CVSS de OSV (ej. `CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H` $\to$ `9.8 CRITICAL`), previniendo degradaciones accidentales de severidad.
 
 ### 3. Hardening y Seguridad Defensiva
@@ -106,11 +118,13 @@ pip install -e ".[dev]"
 
 ### Ejecutar Escaneo desde CLI
 ```bash
-# Escanear el proyecto actual y exportar resumen JSON y SARIF 2.1.0
-python3 scripts/run_security_scan.py \
-  --project-root . \
-  --summary artifacts/summary.json \
-  --sarif artifacts/findings.sarif
+# Escaneo de directorio con SARIF, CycloneDX SBOM y escaneo de historial
+rsa --project-root . \
+    --summary artifacts/summary.json \
+    --sarif artifacts/findings.sarif \
+    --sbom artifacts/bom.json \
+    --history \
+    --fail-on high
 ```
 
 ---

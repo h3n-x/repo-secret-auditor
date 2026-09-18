@@ -9,14 +9,18 @@ from pathlib import Path
 from typing import Protocol
 
 from app.reporting.sarif import sarif_json
+from app.reporting.sbom import write_cyclonedx_sbom
+from app.scanner.baseline import Baseline, load_baseline
 from app.scanner.dependencies import (
     OsvClient,
     PackageRef,
     VulnerabilityMatch,
     parse_package_lock_json,
     parse_poetry_lock,
+    parse_pyproject_toml,
     parse_requirements_txt,
 )
+from app.scanner.git_history import scan_git_history
 from app.scanner.scoring import (
     FindingSignal,
     ScanSummaryAggregate,
@@ -82,6 +86,13 @@ DEFAULT_SCANNABLE_BASENAMES = {
 MAX_SCANNED_FILE_SIZE_BYTES = 1_000_000
 MAX_SCANNED_FILES = 5_000
 
+SEVERITY_ORDER = {
+    "critical": 4,
+    "high": 3,
+    "medium": 2,
+    "low": 1,
+}
+
 
 class OsvClientLike(Protocol):
     def query(self, package: PackageRef) -> list[VulnerabilityMatch]: ...
@@ -98,6 +109,10 @@ class CiFinding:
     severity: str
     confidence: float
     recommendation: str | None
+    suppressed: bool = False
+    suppression_reason: str | None = None
+    commit_sha: str | None = None
+    evidence_hash: str | None = None
 
 
 def run_scan(
@@ -105,27 +120,123 @@ def run_scan(
     project_root: Path,
     summary_path: Path,
     sarif_path: Path,
+    sbom_path: Path | None = None,
+    baseline_path: Path | None = None,
+    scan_history: bool = False,
+    fail_on_severity: str | None = None,
     osv_client: OsvClientLike | None = None,
 ) -> ScanSummaryAggregate:
-    findings = collect_findings(project_root=project_root, osv_client=osv_client or OsvClient())
+    # Resolve baseline
+    active_baseline: Baseline | None = None
+    resolved_baseline_path = baseline_path or (project_root / ".rsa-baseline.json")
+    if resolved_baseline_path and resolved_baseline_path.is_file():
+        active_baseline = load_baseline(resolved_baseline_path)
 
+    findings = collect_findings(
+        project_root=project_root,
+        osv_client=osv_client or OsvClient(),
+        scan_history=scan_history,
+        baseline=active_baseline,
+    )
+
+    # Only non-suppressed findings influence risk score and gate summary
+    active_findings = [f for f in findings if not f.suppressed]
     summary = generate_scan_summary(
         [
             FindingSignal(severity=finding.severity, confidence=finding.confidence)
-            for finding in findings
+            for finding in active_findings
         ]
     )
-    _write_summary(summary_path=summary_path, summary=summary)
+
+    _write_summary(
+        summary_path=summary_path,
+        summary=summary,
+        total_collected=len(findings),
+        suppressed_count=len(findings) - len(active_findings),
+        history_scanned=scan_history,
+        baseline_applied=active_baseline is not None,
+    )
     _write_sarif(sarif_path=sarif_path, findings=findings)
+
+    if sbom_path is not None:
+        packages = collect_packages(project_root)
+        write_cyclonedx_sbom(
+            packages,
+            sbom_path,
+            project_name=project_root.name,
+        )
+
     return summary
 
 
-def collect_findings(*, project_root: Path, osv_client: OsvClientLike) -> list[CiFinding]:
+def collect_packages(project_root: Path) -> list[PackageRef]:
+    """Collect all package references from manifests and lockfiles."""
+    requirements_path = project_root / "requirements.txt"
+    package_lock_path = project_root / "package-lock.json"
+    poetry_lock_path = project_root / "poetry.lock"
+    pyproject_path = project_root / "pyproject.toml"
+
+    requirements_content = ""
+    package_lock_content = '{"name":"scan","lockfileVersion":3,"packages":{}}'
+    poetry_lock_content = ""
+    pyproject_content = ""
+
+    if requirements_path.exists():
+        requirements_content = requirements_path.read_text(encoding="utf-8")
+    if package_lock_path.exists():
+        package_lock_content = package_lock_path.read_text(encoding="utf-8")
+    if poetry_lock_path.exists():
+        poetry_lock_content = poetry_lock_path.read_text(encoding="utf-8")
+    if pyproject_path.exists():
+        pyproject_content = pyproject_path.read_text(encoding="utf-8")
+
+    try:
+        return [
+            *parse_requirements_txt(requirements_content),
+            *parse_package_lock_json(package_lock_content),
+            *parse_poetry_lock(poetry_lock_content),
+            *parse_pyproject_toml(pyproject_content),
+        ]
+    except json.JSONDecodeError:
+        return []
+
+
+def collect_findings(
+    *,
+    project_root: Path,
+    osv_client: OsvClientLike,
+    scan_history: bool = False,
+    baseline: Baseline | None = None,
+) -> list[CiFinding]:
     findings: list[CiFinding] = []
 
-    for secret in _collect_secret_findings(project_root):
-        findings.append(_map_secret_finding(secret=secret, finding_id=len(findings) + 1))
+    # 1. Collect secrets from working directory
+    raw_secrets = _collect_secret_findings(project_root)
 
+    # 2. Collect secrets from git commit history if enabled
+    if scan_history:
+        history_secrets = scan_git_history(project_root)
+        raw_secrets.extend(history_secrets)
+
+    for secret in raw_secrets:
+        suppressed = False
+        suppression_reason = None
+        if baseline is not None:
+            suppressed, suppression_reason = baseline.is_suppressed(
+                secret.evidence_hash,
+                secret.file_path,
+            )
+
+        findings.append(
+            _map_secret_finding(
+                secret=secret,
+                finding_id=len(findings) + 1,
+                suppressed=suppressed,
+                suppression_reason=suppression_reason,
+            )
+        )
+
+    # 3. Collect dependency vulnerabilities
     for vuln in _collect_dependency_findings(project_root=project_root, osv_client=osv_client):
         findings.append(_map_dependency_finding(vuln=vuln, finding_id=len(findings) + 1))
 
@@ -149,30 +260,8 @@ def _collect_secret_findings(project_root: Path) -> list[SecretFinding]:
 def _collect_dependency_findings(
     *, project_root: Path, osv_client: OsvClientLike
 ) -> list[VulnerabilityMatch]:
-    requirements_path = project_root / "requirements.txt"
-    package_lock_path = project_root / "package-lock.json"
-    poetry_lock_path = project_root / "poetry.lock"
-
-    requirements_content = ""
-    package_lock_content = '{"name":"scan","lockfileVersion":3,"packages":{}}'
-    poetry_lock_content = ""
-
-    if requirements_path.exists():
-        requirements_content = requirements_path.read_text(encoding="utf-8")
-
-    if package_lock_path.exists():
-        package_lock_content = package_lock_path.read_text(encoding="utf-8")
-
-    if poetry_lock_path.exists():
-        poetry_lock_content = poetry_lock_path.read_text(encoding="utf-8")
-
-    try:
-        packages = [
-            *parse_requirements_txt(requirements_content),
-            *parse_package_lock_json(package_lock_content),
-            *parse_poetry_lock(poetry_lock_content),
-        ]
-    except json.JSONDecodeError:
+    packages = collect_packages(project_root)
+    if not packages:
         return []
 
     findings: list[VulnerabilityMatch] = []
@@ -184,7 +273,13 @@ def _collect_dependency_findings(
     return findings
 
 
-def _map_secret_finding(*, secret: SecretFinding, finding_id: int) -> CiFinding:
+def _map_secret_finding(
+    *,
+    secret: SecretFinding,
+    finding_id: int,
+    suppressed: bool = False,
+    suppression_reason: str | None = None,
+) -> CiFinding:
     return CiFinding(
         id=finding_id,
         type="secret",
@@ -195,6 +290,10 @@ def _map_secret_finding(*, secret: SecretFinding, finding_id: int) -> CiFinding:
         severity=normalize_severity(secret.severity),
         confidence=secret.confidence,
         recommendation="Revoke and rotate the exposed secret.",
+        suppressed=suppressed,
+        suppression_reason=suppression_reason,
+        commit_sha=secret.commit_sha,
+        evidence_hash=secret.evidence_hash,
     )
 
 
@@ -220,7 +319,6 @@ def _iter_scannable_files(project_root: Path) -> list[Path]:
     files: list[Path] = []
 
     for current_root, dir_names, file_names in os.walk(project_root, topdown=True):
-        # Prune excluded directories early to avoid descending into huge trees.
         dir_names[:] = [name for name in dir_names if name not in DEFAULT_EXCLUDED_DIRS]
 
         current_path = Path(current_root)
@@ -252,9 +350,21 @@ def _is_scannable_candidate(file_path: Path) -> bool:
     return suffix in DEFAULT_SCANNABLE_EXTENSIONS
 
 
-def _write_summary(*, summary_path: Path, summary: ScanSummaryAggregate) -> None:
+def _write_summary(
+    *,
+    summary_path: Path,
+    summary: ScanSummaryAggregate,
+    total_collected: int = 0,
+    suppressed_count: int = 0,
+    history_scanned: bool = False,
+    baseline_applied: bool = False,
+) -> None:
     summary_payload = {
         **asdict(summary),
+        "total_findings_collected": total_collected,
+        "suppressed_findings_count": suppressed_count,
+        "history_scanned": history_scanned,
+        "baseline_applied": baseline_applied,
         "generated_at": datetime.now(UTC).isoformat(),
     }
     summary_path.parent.mkdir(parents=True, exist_ok=True)
@@ -267,10 +377,23 @@ def _write_sarif(*, sarif_path: Path, findings: list[CiFinding]) -> None:
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run repository security scan.")
+    parser = argparse.ArgumentParser(description="Repo Secret & Dependency Auditor CLI.")
     parser.add_argument("--project-root", default=".", help="Repository root path to scan")
-    parser.add_argument("--summary", required=True, help="Path to JSON summary output")
-    parser.add_argument("--sarif", required=True, help="Path to SARIF output")
+    parser.add_argument("--summary", default="summary.json", help="Path to JSON summary output")
+    parser.add_argument("--sarif", default="findings.sarif", help="Path to SARIF output")
+    parser.add_argument("--sbom", default=None, help="Path to output CycloneDX 1.5 JSON SBOM")
+    parser.add_argument("--baseline", default=None, help="Path to custom baseline JSON file")
+    parser.add_argument(
+        "--history",
+        action="store_true",
+        help="Scan git commit history in addition to working directory",
+    )
+    parser.add_argument(
+        "--fail-on",
+        choices=["critical", "high", "medium", "low"],
+        default=None,
+        help="Fail pipeline (exit 1) if unsuppressed findings of this severity or higher exist",
+    )
     return parser.parse_args()
 
 
@@ -279,8 +402,37 @@ def main() -> int:
     project_root = Path(args.project_root).resolve()
     summary_path = Path(args.summary)
     sarif_path = Path(args.sarif)
+    sbom_path = Path(args.sbom) if args.sbom else None
+    baseline_path = Path(args.baseline) if args.baseline else None
 
-    run_scan(project_root=project_root, summary_path=summary_path, sarif_path=sarif_path)
+    summary = run_scan(
+        project_root=project_root,
+        summary_path=summary_path,
+        sarif_path=sarif_path,
+        sbom_path=sbom_path,
+        baseline_path=baseline_path,
+        scan_history=args.history,
+    )
+
+    if args.fail_on:
+        threshold_val = SEVERITY_ORDER.get(args.fail_on.lower(), 1)
+        # Check active findings summary
+        counts = {
+            "critical": summary.critical_count,
+            "high": summary.high_count,
+            "medium": summary.medium_count,
+            "low": summary.low_count,
+        }
+        for sev, count in counts.items():
+            if count > 0 and SEVERITY_ORDER[sev] >= threshold_val:
+                msg = (
+                    f"[ERROR] Security Gate Failed: Found {count} "
+                    f"unsuppressed {sev.upper()} findings."
+                )
+                print(msg)
+                return 1
+
+    print("[INFO] Security scan completed successfully.")
     return 0
 
 

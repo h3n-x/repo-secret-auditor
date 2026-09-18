@@ -411,17 +411,36 @@ class OsvClient:
         return {}
 
 
+def parse_pyproject_toml(content: str) -> list[PackageRef]:
+    """Parse PEP 621 dependencies from pyproject.toml."""
+    if not content.strip():
+        return []
+    try:
+        data = tomllib.loads(content)
+    except Exception:
+        return []
+
+    project_data = data.get("project", {})
+    deps = project_data.get("dependencies", [])
+    if not isinstance(deps, list):
+        return []
+
+    return parse_requirements_txt("\n".join(str(d) for d in deps))
+
+
 def audit_dependencies(
     *,
     requirements_content: str = "",
     package_lock_content: str = "",
     poetry_lock_content: str = "",
+    pyproject_content: str = "",
     osv_client: OsvClient,
 ) -> list[VulnerabilityMatch]:
     packages = [
         *parse_requirements_txt(requirements_content),
         *parse_package_lock_json(package_lock_content),
         *parse_poetry_lock(poetry_lock_content),
+        *parse_pyproject_toml(pyproject_content),
     ]
 
     findings: list[VulnerabilityMatch] = []

@@ -21,6 +21,11 @@ class SecretFinding:
     line_start: int
     line_end: int
     evidence_hash: str
+    commit_sha: str | None = None
+    commit_author: str | None = None
+    commit_date: str | None = None
+    suppressed: bool = False
+    suppression_reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

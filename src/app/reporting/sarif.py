@@ -41,7 +41,7 @@ def build_sarif_report(
     findings: Sequence[FindingLike],
     *,
     tool_name: str = "Repo Secret & Dependency Auditor",
-    tool_version: str = "0.1.0",
+    tool_version: str = "0.2.0",
 ) -> dict[str, Any]:
     rules = _build_rules(findings)
     results = [_finding_to_result(finding) for finding in findings]
@@ -69,7 +69,7 @@ def sarif_json(
     findings: Sequence[FindingLike],
     *,
     tool_name: str = "Repo Secret & Dependency Auditor",
-    tool_version: str = "0.1.0",
+    tool_version: str = "0.2.0",
 ) -> str:
     report = build_sarif_report(findings, tool_name=tool_name, tool_version=tool_version)
     return json.dumps(report, indent=2, sort_keys=True)
@@ -98,7 +98,7 @@ def _build_rules(findings: Sequence[FindingLike]) -> list[dict[str, Any]]:
 
 
 def _finding_to_result(finding: FindingLike) -> dict[str, Any]:
-    return {
+    result_dict: dict[str, Any] = {
         "ruleId": finding.rule_id,
         "level": _sarif_level(finding.severity),
         "message": {
@@ -124,6 +124,17 @@ def _finding_to_result(finding: FindingLike) -> dict[str, Any]:
             "finding_type": finding.type,
         },
     }
+
+    if getattr(finding, "suppressed", False):
+        result_dict["suppressions"] = [
+            {
+                "kind": "external",
+                "justification": getattr(finding, "suppression_reason", "Suppressed via baseline")
+                or "Suppressed via baseline",
+            }
+        ]
+
+    return result_dict
 
 
 def _sarif_level(severity: str) -> str:

@@ -1,0 +1,7 @@
+- id: repo-secret-auditor
+  name: Repo Secret & Dependency Auditor
+  description: Scan repository and commit history for leaked secrets and vulnerable dependencies with SARIF export
+  entry: repo-secret-auditor
+  language: python
+  types: [text]
+  stages: [pre-commit, pre-push]
