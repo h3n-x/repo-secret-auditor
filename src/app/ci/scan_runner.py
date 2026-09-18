@@ -14,6 +14,7 @@ from app.scanner.dependencies import (
     PackageRef,
     VulnerabilityMatch,
     parse_package_lock_json,
+    parse_poetry_lock,
     parse_requirements_txt,
 )
 from app.scanner.scoring import (
@@ -150,9 +151,11 @@ def _collect_dependency_findings(
 ) -> list[VulnerabilityMatch]:
     requirements_path = project_root / "requirements.txt"
     package_lock_path = project_root / "package-lock.json"
+    poetry_lock_path = project_root / "poetry.lock"
 
     requirements_content = ""
     package_lock_content = '{"name":"scan","lockfileVersion":3,"packages":{}}'
+    poetry_lock_content = ""
 
     if requirements_path.exists():
         requirements_content = requirements_path.read_text(encoding="utf-8")
@@ -160,17 +163,24 @@ def _collect_dependency_findings(
     if package_lock_path.exists():
         package_lock_content = package_lock_path.read_text(encoding="utf-8")
 
+    if poetry_lock_path.exists():
+        poetry_lock_content = poetry_lock_path.read_text(encoding="utf-8")
+
     try:
         packages = [
             *parse_requirements_txt(requirements_content),
             *parse_package_lock_json(package_lock_content),
+            *parse_poetry_lock(poetry_lock_content),
         ]
     except json.JSONDecodeError:
         return []
 
     findings: list[VulnerabilityMatch] = []
-    for package in packages:
-        findings.extend(osv_client.query(package))
+    if hasattr(osv_client, "query_batch"):
+        findings.extend(osv_client.query_batch(packages))
+    else:
+        for package in packages:
+            findings.extend(osv_client.query(package))
     return findings
 
 

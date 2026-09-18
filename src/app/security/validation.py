@@ -1,4 +1,4 @@
-"""Input validation for API requests."""
+"""Input validation for API requests with strict SSRF mitigation."""
 
 from __future__ import annotations
 
@@ -6,6 +6,9 @@ import re
 from urllib.parse import urlparse
 
 from fastapi import HTTPException, status
+
+ALLOWED_GIT_HOSTS = frozenset({"github.com", "gitlab.com", "bitbucket.org", "gitea.io"})
+ALLOWED_SCHEMES = frozenset({"https", "ssh"})
 
 
 def validate_git_url(repo_url: str) -> str:
@@ -18,7 +21,7 @@ def validate_git_url(repo_url: str) -> str:
         The normalized, valid URL.
 
     Raises:
-        HTTPException: If the URL is invalid or unsafe.
+        HTTPException: If the URL is invalid, unsafe, or targets local/internal infrastructure.
     """
     if not repo_url or len(repo_url) > 2048:
         raise HTTPException(
@@ -29,42 +32,49 @@ def validate_git_url(repo_url: str) -> str:
     # Support scp-like SSH syntax: git@host:owner/repo.git
     scp_like_match = re.match(r"^(?P<user>[\w.-]+)@(?P<host>[\w.-]+):(?P<path>.+)$", repo_url)
     if scp_like_match:
-        host = scp_like_match.group("host")
-        allowed_hosts = {"github.com", "gitlab.com", "bitbucket.org", "gitea.io", "localhost"}
-        is_localhost = host in {"localhost", "127.0.0.1"}
-        is_known_host = any(
-            host == allowed or host.endswith(f".{allowed}") for allowed in allowed_hosts
-        )
-        if not (is_localhost or is_known_host):
+        host = scp_like_match.group("host").lower()
+        if host in {"localhost", "127.0.0.1", "0.0.0.0"} or host.endswith(".localhost"):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail=f"repo_url must point to a whitelisted Git host: {', '.join(allowed_hosts)}",
+                detail="Access to localhost or internal network is strictly prohibited",
+            )
+
+        is_known_host = any(
+            host == allowed or host.endswith(f".{allowed}") for allowed in ALLOWED_GIT_HOSTS
+        )
+        allowed_list = ", ".join(sorted(ALLOWED_GIT_HOSTS))
+        if not is_known_host:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"repo_url must point to a whitelisted Git host: {allowed_list}",
             )
         return repo_url
 
     parsed = urlparse(repo_url)
 
-    allowed_schemes = {"http", "https", "git", "ssh"}
-    if parsed.scheme not in allowed_schemes:
+    if parsed.scheme not in ALLOWED_SCHEMES:
+        allowed_schemes_list = ", ".join(sorted(ALLOWED_SCHEMES))
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=f"repo_url scheme must be one of: {', '.join(allowed_schemes)}",
+            detail=f"repo_url scheme must be one of: {allowed_schemes_list}",
         )
 
-    allowed_hosts = {"github.com", "gitlab.com", "bitbucket.org", "gitea.io", "localhost"}
-    is_localhost = parsed.hostname in {"localhost", "127.0.0.1"}
-    is_known_host = bool(
-        parsed.hostname
-        and any(
-            parsed.hostname == host or parsed.hostname.endswith(f".{host}")
-            for host in allowed_hosts
+    host = (parsed.hostname or "").lower()
+    if not host or host in {"localhost", "127.0.0.1", "0.0.0.0"} or host.endswith(".localhost"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Access to localhost or internal network is strictly prohibited",
         )
+
+    is_known_host = any(
+        host == allowed or host.endswith(f".{allowed}") for allowed in ALLOWED_GIT_HOSTS
     )
 
-    if not (is_localhost or is_known_host):
+    if not is_known_host:
+        allowed_list = ", ".join(sorted(ALLOWED_GIT_HOSTS))
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=f"repo_url must point to a whitelisted Git host: {', '.join(allowed_hosts)}",
+            detail=f"repo_url must point to a whitelisted Git host: {allowed_list}",
         )
 
     return repo_url
@@ -80,7 +90,7 @@ def validate_git_ref(ref: str | None) -> str:
         The validated reference.
 
     Raises:
-        HTTPException: If the reference is invalid.
+        HTTPException: If the reference is invalid or suspicious.
     """
     if ref is None:
         return "HEAD"
@@ -95,6 +105,13 @@ def validate_git_ref(ref: str | None) -> str:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="ref contains invalid characters or patterns",
+        )
+
+    # Disallow leading dashes to prevent command-line option injection (e.g. -o, --upload-pack)
+    if ref.startswith("-"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="ref must not start with a hyphen or dash",
         )
 
     if ".." in ref or ref.startswith("/") or ref.endswith("/") or "//" in ref:

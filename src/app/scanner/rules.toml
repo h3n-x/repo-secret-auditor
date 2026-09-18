@@ -1,0 +1,91 @@
+title = "Repo Secret Auditor Default Rules"
+
+[[rules]]
+id = "secret.github_pat"
+description = "GitHub Personal Access Token"
+regex = '''\b(ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{82}|ghu_[A-Za-z0-9]{36}|ghs_[A-Za-z0-9]{36}|ghr_[A-Za-z0-9]{36})\b'''
+secretGroup = 1
+entropy = 3.3
+severity = "high"
+keywords = ["ghp_", "github_pat_", "ghu_", "ghs_", "ghr_"]
+
+[[rules]]
+id = "secret.aws_access_key"
+description = "AWS Access Key ID"
+regex = '''\b(AKIA[0-9A-Z]{16})\b'''
+secretGroup = 1
+entropy = 2.9
+severity = "high"
+keywords = ["AKIA"]
+
+[[rules]]
+id = "secret.aws_secret_key"
+description = "AWS Secret Access Key"
+regex = '''(?i)\b(?:aws_secret_access_key|aws_secret_key|secret_access_key)\b\s*[:=]\s*['"]?([A-Za-z0-9/+=]{40})['"]?'''
+secretGroup = 1
+entropy = 3.5
+severity = "critical"
+keywords = ["aws_secret_access_key", "aws_secret_key", "secret_access_key"]
+
+[[rules]]
+id = "secret.private_key"
+description = "Private Key (RSA, OpenSSH, EC, PGP, DSA)"
+regex = '''(-----BEGIN (?:RSA |EC |OPENSSH |PGP |DSA )?PRIVATE KEY(?: BLOCK)?-----)'''
+secretGroup = 1
+entropy = 0.0
+severity = "critical"
+keywords = ["-----BEGIN"]
+
+[[rules]]
+id = "secret.gcp_api_key"
+description = "Google Cloud Platform API Key"
+regex = '''\b(AIza[0-9A-Za-z\-_]{35})\b'''
+secretGroup = 1
+entropy = 3.2
+severity = "high"
+keywords = ["AIza"]
+
+[[rules]]
+id = "secret.slack_token"
+description = "Slack Token"
+regex = '''\b(xox[baprs]-[0-9]{10,13}-[0-9]{10,13}[a-zA-Z0-9-]*)'''
+secretGroup = 1
+entropy = 2.8
+severity = "high"
+keywords = ["xoxb-", "xoxp-", "xoxa-", "xoxr-", "xoxs-"]
+
+[[rules]]
+id = "secret.stripe_key"
+description = "Stripe API Key"
+regex = '''\b((?:sk|rk)_(?:live|test)_[0-9a-zA-Z]{24,99})\b'''
+secretGroup = 1
+entropy = 3.0
+severity = "high"
+keywords = ["sk_live", "rk_live", "sk_test", "rk_test"]
+
+[[rules]]
+id = "secret.openai_api_key"
+description = "OpenAI API Key"
+regex = '''\b(sk-[A-Za-z0-9]{20,T3BlbkFJ[A-Za-z0-9]{20,}|sk-proj-[A-Za-z0-9_\-]{48,})\b'''
+secretGroup = 1
+entropy = 3.5
+severity = "high"
+keywords = ["sk-", "sk-proj-"]
+
+[[rules]]
+id = "secret.jwt_token"
+description = "JSON Web Token (JWT)"
+regex = '''\b(ey[A-Za-z0-9_-]{10,}\.ey[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})\b'''
+secretGroup = 1
+entropy = 3.5
+severity = "medium"
+keywords = ["ey"]
+
+[[rules]]
+id = "secret.generic_api_key"
+description = "Generic API Key or Secret"
+regex = '''(?ix)\b(?:api[_-]?key|token|secret)\b\s*[:=]\s*['"]?([A-Za-z0-9_\-]{20,})['"]?'''
+secretGroup = 1
+entropy = 3.5
+severity = "medium"
+keywords = ["api_key", "apikey", "api-key", "token", "secret"]
