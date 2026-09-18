@@ -54,7 +54,9 @@ jobs:
           set -euo pipefail
           python3 --version
           python3 -m pip install --upgrade pip
-          if [[ -f requirements.txt ]]; then
+          if [[ -f pyproject.toml ]]; then
+            python3 -m pip install .
+          elif [[ -f requirements.txt ]]; then
             python3 -m pip install -r requirements.txt
           fi
 

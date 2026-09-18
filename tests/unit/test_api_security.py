@@ -160,3 +160,44 @@ def test_create_scan_rate_limit() -> None:
     with TestClient(app) as client:
         response = client.post("/scans", json=valid_payload)
         assert response.status_code in {202, 422, 429}
+
+
+def test_validate_git_url_rejects_localhost_and_internal_ip() -> None:
+    """Validate that localhost and internal IPs are rejected to prevent SSRF."""
+    from fastapi import HTTPException
+
+    targets = [
+        "http://localhost:5432/repo.git",
+        "https://127.0.0.1/repo.git",
+        "git@localhost:repo.git",
+    ]
+    for target in targets:
+        with pytest.raises(HTTPException) as exc_info:
+            validate_git_url(target)
+        assert exc_info.value.status_code == 422
+        detail = exc_info.value.detail.lower()
+        assert (
+            "prohibited" in detail
+            or "scheme" in detail
+            or "whitelisted" in detail
+        )
+
+
+def test_validate_git_ref_rejects_leading_hyphen() -> None:
+    """Validate that refs starting with hyphens are rejected to prevent command injection."""
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as exc_info:
+        validate_git_ref("--upload-pack=exploit")
+    assert exc_info.value.status_code == 422
+    assert "hyphen" in exc_info.value.detail.lower()
+
+
+def test_secure_logger_redacts_formatted_args() -> None:
+    """Validate that secrets passed in *args format are redacted."""
+    logger = SecureLogger("test_formatter")
+    raw_token = "ghp_1234567890abcdef1234567890abcdef1234"
+    redacted = logger._format_and_redact("User token was %s", raw_token)
+    assert raw_token not in redacted
+    assert "[REDACTED_PAT]" in redacted
+

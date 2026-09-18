@@ -7,6 +7,21 @@ import re
 from typing import Any
 
 
+class SensitiveDataFilter(logging.Filter):
+    """Logging filter that redacts sensitive patterns from all LogRecords."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.msg, str):
+            if record.args:
+                try:
+                    record.msg = record.msg % record.args
+                    record.args = ()
+                except Exception:
+                    pass
+            record.msg = SecureLogger.redact(record.msg)
+        return True
+
+
 class SecureLogger:
     """Logger wrapper that redacts sensitive information from all output."""
 
@@ -20,6 +35,8 @@ class SecureLogger:
         (r"(password\s*[:=]\s*\S+)", "[REDACTED_PASSWORD]"),
         (r"(api[_-]?key\s*[:=]\s*\S+)", "[REDACTED_API_KEY]"),
         (r"(token\s*[:=]\s*\S+)", "[REDACTED_TOKEN]"),
+        (r"(sk_live_[0-9a-zA-Z]{24,})", "[REDACTED_STRIPE_KEY]"),
+        (r"(xox[baprs]-[0-9a-zA-Z-]+)", "[REDACTED_SLACK_TOKEN]"),
     ]
 
     def __init__(self, name: str) -> None:
@@ -29,6 +46,9 @@ class SecureLogger:
             name: The name of the logger.
         """
         self._logger = logging.getLogger(name)
+        # Attach filter if not already attached
+        if not any(isinstance(f, SensitiveDataFilter) for f in self._logger.filters):
+            self._logger.addFilter(SensitiveDataFilter())
 
     @staticmethod
     def redact(message: Any) -> str:
@@ -45,22 +65,32 @@ class SecureLogger:
             text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
         return text
 
+    def _format_and_redact(self, message: Any, *args: Any) -> str:
+        if args:
+            try:
+                formatted = str(message) % args
+            except Exception:
+                formatted = f"{message} {' '.join(str(a) for a in args)}"
+        else:
+            formatted = str(message)
+        return self.redact(formatted)
+
     def debug(self, message: Any, *args: Any, **kwargs: Any) -> None:
         """Log a debug message with redaction."""
-        self._logger.debug(self.redact(message), *args, **kwargs)
+        self._logger.debug(self._format_and_redact(message, *args), **kwargs)
 
     def info(self, message: Any, *args: Any, **kwargs: Any) -> None:
         """Log an info message with redaction."""
-        self._logger.info(self.redact(message), *args, **kwargs)
+        self._logger.info(self._format_and_redact(message, *args), **kwargs)
 
     def warning(self, message: Any, *args: Any, **kwargs: Any) -> None:
         """Log a warning message with redaction."""
-        self._logger.warning(self.redact(message), *args, **kwargs)
+        self._logger.warning(self._format_and_redact(message, *args), **kwargs)
 
     def error(self, message: Any, *args: Any, **kwargs: Any) -> None:
         """Log an error message with redaction."""
-        self._logger.error(self.redact(message), *args, **kwargs)
+        self._logger.error(self._format_and_redact(message, *args), **kwargs)
 
     def critical(self, message: Any, *args: Any, **kwargs: Any) -> None:
         """Log a critical message with redaction."""
-        self._logger.critical(self.redact(message), *args, **kwargs)
+        self._logger.critical(self._format_and_redact(message, *args), **kwargs)

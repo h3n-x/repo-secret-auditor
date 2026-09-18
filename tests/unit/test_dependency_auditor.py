@@ -9,8 +9,11 @@ from urllib.error import URLError
 from app.scanner.dependencies import (
     OsvClient,
     PackageRef,
+    _map_cvss_to_level,
     audit_dependencies,
+    parse_cvss_vector_score,
     parse_package_lock_json,
+    parse_poetry_lock,
     parse_requirements_txt,
 )
 
@@ -153,6 +156,92 @@ def test_audit_dependencies_aggregates_python_and_npm_results() -> None:
         )
 
     assert {item.vuln_id for item in findings} == {"CVE-2026-12345", "CVE-2021-23337"}
+ 
+ 
+def test_parse_cvss_vector_score_calculates_critical_score() -> None:
+    critical_vector = "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+    score = parse_cvss_vector_score(critical_vector)
+    assert score == 9.8
+    assert _map_cvss_to_level(critical_vector) == "critical"
+
+    medium_vector = "CVSS:3.1/AV:N/AC:H/PR:L/UI:R/S:U/C:L/I:N/A:N"
+    med_score = parse_cvss_vector_score(medium_vector)
+    assert med_score is not None and 2.0 <= med_score <= 4.0
+    assert _map_cvss_to_level(medium_vector) == "low"
+
+    # Numeric score string
+    assert parse_cvss_vector_score("7.5") == 7.5
+    assert _map_cvss_to_level("7.5") == "high"
+
+
+def test_parse_requirements_txt_supports_range_specifiers() -> None:
+    content = """
+    # Comments should be ignored
+    flask>=2.3.0
+    requests~=2.28.0; python_version > '3.8'
+    uvicorn[standard]<=0.34.0
+    pydantic==2.5.0
+    """
+    packages = parse_requirements_txt(content)
+    pkg_map = {p.name: p.version for p in packages}
+    assert pkg_map["flask"] == "2.3.0"
+    assert pkg_map["requests"] == "2.28.0"
+    assert pkg_map["uvicorn"] == "0.34.0"
+    assert pkg_map["pydantic"] == "2.5.0"
+
+
+def test_parse_poetry_lock_extracts_packages() -> None:
+    sample_poetry = """
+    [[package]]
+    name = "certifi"
+    version = "2024.2.2"
+    description = "Python package for providing Mozilla's CA Bundle."
+    optional = false
+    python-versions = ">=3.6"
+
+    [[package]]
+    name = "urllib3"
+    version = "2.2.1"
+    description = "HTTP library with thread-safe connection pooling, file post, and more."
+    optional = false
+    python-versions = ">=3.8"
+    """
+    packages = parse_poetry_lock(sample_poetry)
+    assert len(packages) == 2
+    assert packages[0] == PackageRef(name="certifi", version="2024.2.2", ecosystem="PyPI")
+    assert packages[1] == PackageRef(name="urllib3", version="2.2.1", ecosystem="PyPI")
+
+
+def test_osv_client_query_batch_returns_matches() -> None:
+    def batch_response(request: object, timeout: float) -> _FakeHttpResponse:
+        return _FakeHttpResponse(
+            json.dumps(
+                {
+                    "results": [
+                        {
+                            "vulns": [
+                                {
+                                    "id": "GHSA-1234",
+                                    "summary": "Sample vuln",
+                                    "database_specific": {"severity": "CRITICAL"},
+                                    "references": [],
+                                    "affected": [],
+                                }
+                            ]
+                        }
+                    ]
+                }
+            )
+        )
+
+    client = OsvClient()
+    pkgs = [PackageRef(name="requests", version="2.0.0", ecosystem="PyPI")]
+    with _patch_urlopen(batch_response):
+        matches = client.query_batch(pkgs)
+
+    assert len(matches) == 1
+    assert matches[0].vuln_id == "GHSA-1234"
+    assert matches[0].severity == "critical"
 
 
 class _FakeHttpResponse:

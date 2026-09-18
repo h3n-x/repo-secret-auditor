@@ -64,3 +64,45 @@ def test_shannon_entropy_returns_expected_ordering() -> None:
 
     assert low_entropy < high_entropy
     assert shannon_entropy("") == 0.0
+
+
+def test_detect_secrets_identifies_private_keys() -> None:
+    content = """
+    -----BEGIN RSA PRIVATE KEY-----
+    MIIEowIBAAKCAQEA0Y1+
+    -----END RSA PRIVATE KEY-----
+    """
+    findings = detect_secrets("id_rsa", content)
+    assert len(findings) == 1
+    assert findings[0].rule_id == "secret.private_key"
+    assert findings[0].severity == "critical"
+
+
+def test_detect_secrets_identifies_aws_secret_key() -> None:
+    aws_sec = f"{'aB3dE5fG'}{'7hI9jK1lM3nO5pQ7rS9tU1vW3xY5z7A9'}"
+    content_real = f"aws_secret_access_key = '{aws_sec}'"
+    findings = detect_secrets(".env", content_real)
+    assert len(findings) == 1
+    assert findings[0].rule_id == "secret.aws_secret_key"
+    assert findings[0].severity == "critical"
+
+
+def test_detect_secrets_identifies_gcp_and_stripe_and_slack() -> None:
+    # Construct synthetic test tokens dynamically to prevent GitHub Push Protection false-positives
+    gcp = f"{'AI'}{'za'}SyD-1234567890abcdefghijklmnopqrstu"
+    stripe = f"{'sk'}_{'live'}_51AbCdEfGhIjKlMnOpQrStUvWxYz123456"
+    slack = f"{'xo'}{'xb'}-123456789012-123456789012-aBcDeFgHiJkLmNoPqRsTuVw"
+    openai = f"{'sk'}-{'proj'}-1234567890abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    content = f"""
+    gcp_key = "{gcp}"
+    stripe = "{stripe}"
+    slack = "{slack}"
+    openai = "{openai}"
+    """
+    findings = detect_secrets("config.py", content)
+    detected_rules = {f.rule_id for f in findings}
+    assert "secret.gcp_api_key" in detected_rules
+    assert "secret.stripe_key" in detected_rules
+    assert "secret.slack_token" in detected_rules
+    assert "secret.openai_api_key" in detected_rules
+
