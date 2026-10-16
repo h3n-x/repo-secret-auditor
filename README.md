@@ -1,58 +1,118 @@
-# Repo Secret & Dependency Auditor
+<h3 align="center">
+  <img src="https://raw.githubusercontent.com/catppuccin/catppuccin/main/assets/misc/transparent.png" height="30" width="0"/>
+  Repo Secret Auditor
+  <img src="https://raw.githubusercontent.com/catppuccin/catppuccin/main/assets/misc/transparent.png" height="30" width="0"/>
+  <br/>
+  <a href="https://github.com/h3n-x/repo-secret-auditor">Secret and dependency scanning for CI/CD: Gitleaks-compatible rules, commit history, OSV, SBOM and SARIF</a>
+  <br/><br/>
+  <p>
+    🌐 <strong>English</strong> · <a href="README.es.md">Español</a>
+  </p>
+</h3>
 
-[![Python Version](https://img.shields.io/badge/python-3.12%20%7C%203.13%20%7C%203.14-blue.svg)](https://www.python.org/)
-[![Security Audit](https://img.shields.io/badge/pip--audit-0%20CVEs%20clean-brightgreen.svg)](https://pypi.org/project/pip-audit/)
-[![Coverage](https://img.shields.io/badge/coverage-91%25-success.svg)](tests/)
-[![SARIF](https://img.shields.io/badge/SARIF-2.1.0%20OASIS-orange.svg)](https://sarifweb.azurewebsites.net/)
-[![CycloneDX](https://img.shields.io/badge/CycloneDX-1.5%20SBOM-blueviolet.svg)](https://cyclonedx.org/)
-[![GitHub Code Scanning](https://img.shields.io/badge/GitHub%20Code%20Scanning-Ready-blue.svg)](https://docs.github.com/en/code-security/code-scanning)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+<p align="center">
+  <img src="https://img.shields.io/badge/Python-3.12_%7C_3.13_%7C_3.14-74c7ec?style=for-the-badge&logo=python&logoColor=d9e0ee&labelColor=363a4f" alt="Python"/>
+  <img src="https://img.shields.io/badge/SARIF-2.1.0-fab387?style=for-the-badge&labelColor=363a4f" alt="SARIF"/>
+  <img src="https://img.shields.io/badge/CycloneDX-1.5_SBOM-cba6f7?style=for-the-badge&labelColor=363a4f" alt="CycloneDX"/>
+  <img src="https://img.shields.io/badge/Code_Scanning-ready-89dceb?style=for-the-badge&logo=github&logoColor=d9e0ee&labelColor=363a4f" alt="Code Scanning"/>
+</p>
 
-Backend de escaneo estático de seguridad de código abierto diseñado para auditar repositorios en pipelines de CI/CD: detección de secretos de alta fidelidad (compatible con reglas Gitleaks TOML), escaneo de historial de commits pasados (`--history`), análisis de vulnerabilidades en dependencias mediante Google OSV Batch API, supresiones estructuradas con `.rsa-baseline.json`, exportación de SBOM en **CycloneDX 1.5 JSON** y exportación en formato estándar **SARIF 2.1.0** para integración nativa con **GitHub Code Scanning Alerts**.
+<p align="center">
+  <img src="https://img.shields.io/badge/pip--audit-0_CVEs-a6e3a1?style=for-the-badge&labelColor=363a4f" alt="pip-audit"/>
+  <img src="https://img.shields.io/badge/coverage-91%25-a6e3a1?style=for-the-badge&logo=pytest&logoColor=d9e0ee&labelColor=363a4f" alt="coverage"/>
+  <img src="https://img.shields.io/badge/license-MIT-a6e3a1?style=for-the-badge&labelColor=363a4f" alt="license"/>
+</p>
 
----
+<p align="center">
+  <a href="#%EF%B8%8F-architecture">Architecture</a>
+  ·
+  <a href="#-quick-start">Quick start</a>
+  ·
+  <a href="#%EF%B8%8F-github-actions">GitHub Actions</a>
+  ·
+  <a href="LICENSE">License</a>
+</p>
 
-## 🏛️ Arquitectura del Sistema
+&nbsp;
+
+## 🪄 About
+
+An open-source static security scanner built to audit repositories in CI/CD pipelines: high-fidelity secret detection
+(Gitleaks-compatible TOML rules), scanning of past commits (`--history`), dependency vulnerability analysis through the Google
+OSV Batch API, structured suppressions with `.rsa-baseline.json`, a **CycloneDX 1.5 JSON** SBOM and **SARIF 2.1.0** output for
+native **GitHub Code Scanning** alerts.
+
+> [!NOTE]
+> Secrets are never printed in plain text, neither in SARIF reports nor in logs: each finding carries a non-reversible SHA-256
+> hash as its evidence identifier.
+
+&nbsp;
+
+## ✨ Features
+
+### Secrets and history
+
+| | |
+|---|---|
+| 🕰️ **Deep commit scanning** (`--history`) | Walks the full history (`git log -p`) to catch credentials that were added and later "deleted", with the commit SHA, date and author. |
+| 📜 **TOML rule engine** | Loads and compiles Gitleaks-compatible rules from [`src/app/scanner/rules.toml`](src/app/scanner/rules.toml). |
+| 🗝️ **Curated rules** | Private keys (RSA, OpenSSH, EC, PGP, DSA), AWS access and secret keys, GCP API keys, Slack tokens, Stripe keys, OpenAI/Anthropic API keys, JWT and Bearer tokens, classic and fine-grained GitHub PATs. |
+| 📌 **Baseline** (`.rsa-baseline.json`) | Records known findings or accepted risk, with an evidence hash and an optional expiry date, so the pipeline doesn't break. |
+| 🎲 **Shannon entropy filter** | Per-charset randomness analysis to discard trivial tokens. |
+| 🧹 **Placeholder filter** | Ignores documentation examples (`EXAMPLE`, `PLACEHOLDER`, `YOUR_KEY`, `DUMMY`). |
+
+### Dependencies and SBOM
+
+| | |
+|---|---|
+| 📦 **Modern lockfiles** | Python: `requirements.txt`, `pyproject.toml` (PEP 621) and `poetry.lock`. Node.js: `package-lock.json` (v1, v2 and v3 with nested trees). |
+| 🧾 **CycloneDX 1.5 SBOM** | A formal component inventory with standard Package URLs (`pkg:pypi/...`, `pkg:npm/...`). |
+| ⚡ **OSV batch queries** (`/v1/querybatch`) | One HTTP request resolves every package concurrently in under 1.5 s. |
+| 🧮 **CVSS v3.1 calculator** | Computes the base score from the OSV vector (e.g. `CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H` → `9.8 CRITICAL`), so severities are never downgraded by accident. |
+
+### Hardening
+
+| | |
+|---|---|
+| 🌐 **Strict SSRF mitigation** | Allowlist of public Git hosts (`github.com`, `gitlab.com`, `bitbucket.org`, `gitea.io`); rejects `localhost`, `127.0.0.1`, cloud metadata IPs (`169.254.169.254`) and insecure schemes (`git://`, `http://`). |
+| 🚫 **Git argument injection prevention** | `ref` is validated against option characters (`-`). |
+| 🔏 **Sensitive data log filter** | `SensitiveDataFilter` in the `logging.Handler` redacts the formatted message and its `*args`. |
+
+&nbsp;
+
+## 🏛️ Architecture
 
 ```mermaid
 flowchart TD
-    subgraph Input["Entrada de Código & Lockfiles"]
-        SRC["Código Fuente / .env / Config"]
-        HIST["Historial de Commits Git (git log -p)"]
+    subgraph Input["Code & lockfiles"]
+        SRC["Source code / .env / config"]
+        HIST["Git commit history (git log -p)"]
         LOCK["requirements.txt / poetry.lock / package-lock.json / pyproject.toml"]
-        BASE[".rsa-baseline.json (Supresiones / Riesgo Aceptado)"]
+        BASE[".rsa-baseline.json (suppressions / accepted risk)"]
     end
-
-    subgraph CoreEngine["Motor de Auditoría"]
-        SEC["Motor de Secretos<br/>(Reglas TOML Gitleaks + Entropía Shannon)"]
-        GWALK["Git Diff History Walker<br/>(Atribución de Commit SHA y Autor)"]
-        DEP["Motor de Dependencias<br/>(Parser Multi-Ecosistema PEP 621 / npm / Poetry)"]
-        OSV["Cliente OSV Batch<br/>(api.osv.dev/v1/querybatch)"]
-        CVSS["Calculador Algorítmico CVSS v3.1<br/>(Vector Score Parsing)"]
+    subgraph CoreEngine["Audit engine"]
+        SEC["Secret engine<br/>(Gitleaks TOML rules + Shannon entropy)"]
+        GWALK["Git diff history walker<br/>(commit SHA and author)"]
+        DEP["Dependency engine<br/>(PEP 621 / npm / Poetry parsers)"]
+        OSV["OSV batch client<br/>(api.osv.dev/v1/querybatch)"]
+        CVSS["CVSS v3.1 calculator<br/>(vector parsing)"]
     end
-
-    subgraph SecurityShield["Capa de Hardening & Validación"]
-        VAL["Validación Anti-SSRF<br/>(Bloqueo estricto de Localhost/LAN)"]
-        LOG["Logging Seguro<br/>(SensitiveDataFilter en LogRecord)"]
+    subgraph SecurityShield["Hardening & validation"]
+        VAL["Anti-SSRF validation<br/>(no localhost/LAN)"]
+        LOG["Safe logging<br/>(SensitiveDataFilter)"]
     end
-
-    subgraph Reporting["Salida Estructurada & CI Gate"]
-        SARIF["Reporte SARIF 2.1.0 (OASIS)"]
+    subgraph Reporting["Structured output & CI gate"]
+        SARIF["SARIF 2.1.0 report (OASIS)"]
         SBOM["CycloneDX 1.5 JSON SBOM (PURLs)"]
-        SUM["Resumen JSON / Risk Score"]
-        GH["GitHub Code Scanning Alerts"]
-        GATE{"Security Policy Gate<br/>(Fail on HIGH/CRITICAL)"}
+        SUM["JSON summary / risk score"]
+        GH["GitHub Code Scanning alerts"]
+        GATE{"Security policy gate<br/>(fail on HIGH/CRITICAL)"}
     end
-
     SRC --> SEC
-    HIST --> GWALK
-    GWALK --> SEC
+    HIST --> GWALK --> SEC
     BASE -.-> SEC
-    LOCK --> DEP
-    DEP --> OSV
+    LOCK --> DEP --> OSV --> CVSS --> SUM
     DEP --> SBOM
-    OSV --> CVSS
-    CVSS --> SUM
     SEC --> SUM
     SEC --> SARIF
     CVSS --> SARIF
@@ -60,65 +120,23 @@ flowchart TD
     SUM --> GATE
 ```
 
----
+&nbsp;
 
-## ✨ Capacidades Clave
+## 🚀 Quick start
 
-### 1. Detección de Secretos y Escaneo Histórico
-- **Escaneo Profundo de Commits (`--history`)**: Analiza la historia completa del repositorio (`git log -p`), detectando credenciales que fueron introducidas y posteriormente "borradas" en commits subsecuentes, extrayendo el SHA, fecha y autor.
-- **Motor basado en TOML (compatible con Gitleaks)**: Carga y compila reglas estandarizadas desde [`src/app/scanner/rules.toml`](src/app/scanner/rules.toml).
-- **Catálogo de reglas curadas**:
-  - Claves privadas (RSA, OpenSSH, EC, PGP, DSA).
-  - AWS Access Keys (`AKIA...`) y AWS Secret Access Keys (40 caracteres).
-  - Google Cloud Platform API Keys (`AIza...`).
-  - Slack Bot / User Tokens (`xoxb-`, `xoxp-`, `xoxa-`, `xoxr-`).
-  - Stripe API Live/Test Keys (`sk_live_`, `rk_live_`).
-  - OpenAI / Anthropic API Keys (`sk-`, `sk-proj-`).
-  - JSON Web Tokens (JWT) y Bearer tokens.
-  - GitHub PATs clásicos y Fine-Grained (`ghp_`, `github_pat_`, etc.).
-- **Mecanismo de Línea Base (`.rsa-baseline.json`)**: Permite registrar hallazgos conocidos o riesgos aceptados con hash de evidencia y fecha de expiración opcional para no romper el pipeline de CI.
-- **Filtro de Entropía de Shannon**: Análisis de aleatoriedad por juego de caracteres para descartar tokens triviales.
-- **Filtrado de placeholders**: Ignora de forma automática ejemplos y variables de documentación (`EXAMPLE`, `PLACEHOLDER`, `YOUR_KEY`, `DUMMY`).
-- **Zero-Knowledge Evidence**: Los secretos nunca se imprimen en texto plano en reportes SARIF ni logs; se genera un hash SHA-256 no reversible como identificador de evidencia.
+**Requirements:** Python 3.12+ (3.13 and 3.14 supported).
 
-### 2. Auditoría de Dependencias y Exportación SBOM
-- **Soporte de Lockfiles Modernos**:
-  - Python: `requirements.txt`, `pyproject.toml` (PEP 621) y `poetry.lock` (formato TOML).
-  - Node.js: `package-lock.json` (formatos v1, v2 y v3 con árboles anidados).
-- **Exportador CycloneDX 1.5 JSON SBOM**: Genera el inventario formal de componentes de software con Package URLs (PURL) estándar (`pkg:pypi/...`, `pkg:npm/...`).
-- **Consultas por Lotes en Google OSV (`/v1/querybatch`)**: Una sola petición HTTP resuelve paquetes concurrentemente en < 1.5s.
-- **Parser Algorítmico CVSS v3.1**: Calcula matemáticamente el score base a partir del vector CVSS de OSV (ej. `CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H` $\to$ `9.8 CRITICAL`), previniendo degradaciones accidentales de severidad.
-
-### 3. Hardening y Seguridad Defensiva
-- **Mitigación Estricta de SSRF**: Lista blanca restringida a hosts Git públicos autorizados (`github.com`, `gitlab.com`, `bitbucket.org`, `gitea.io`). Rechazo explícito de `localhost`, `127.0.0.1`, IPs de metadata cloud (`169.254.169.254`) y esquemas no seguros (`git://`, `http://`).
-- **Prevención de Inyección de Argumentos Git**: Validación de `ref` contra caracteres de opciones (`-`).
-- **Filtro de Logging de Datos Sensibles**: `SensitiveDataFilter` integrado en `logging.Handler` que censura automáticamente el mensaje formateado y `*args`.
-
----
-
-## 🚀 Inicio Rápido
-
-### Requisitos
-- Python 3.12+ (compatible con Python 3.13 y 3.14).
-
-### Instalación Local
 ```bash
-# Clonar repositorio
 git clone https://github.com/h3n-x/repo-secret-auditor.git
 cd repo-secret-auditor
-
-# Crear y activar entorno virtual
-python3 -m venv .venv
-source .venv/bin/activate
-
-# Instalar paquete en modo editable con herramientas de desarrollo
+python3 -m venv .venv && source .venv/bin/activate
 pip install --upgrade pip
 pip install -e ".[dev]"
 ```
 
-### Ejecutar Escaneo desde CLI
+Scan a directory, with SARIF, a CycloneDX SBOM and the commit history:
+
 ```bash
-# Escaneo de directorio con SARIF, CycloneDX SBOM y escaneo de historial
 rsa --project-root . \
     --summary artifacts/summary.json \
     --sarif artifacts/findings.sarif \
@@ -127,11 +145,12 @@ rsa --project-root . \
     --fail-on high
 ```
 
----
+&nbsp;
 
-## 🛡️ Integración en GitHub Actions
+## 🛡️ GitHub Actions
 
-Puedes invocar directamente el workflow reutilizable en cualquier repositorio para escanear pull requests y publicar alertas automáticas en la pestaña de **Security > Code scanning alerts**:
+Call the reusable workflow from any repository to scan pull requests and publish alerts under
+**Security → Code scanning alerts**:
 
 ```yaml
 name: Security Audit Pipeline
@@ -156,42 +175,43 @@ jobs:
       github-token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
----
+&nbsp;
 
-## 🧪 Pruebas y Aseguramiento de Calidad
+## 📊 Secret detection matrix
 
-```bash
-# Ejecutar suite de pruebas completa con reporte de cobertura
-pytest tests/ --cov=src --cov-fail-under=85
-
-# Verificar estilo y reglas estáticas con Ruff
-ruff check .
-
-# Validar tipado estricto con Mypy
-mypy src tests
-
-# Auditar dependencias contra la base de datos de CVEs
-pip-audit
-```
-
----
-
-## 📊 Matriz de Detección de Secretos
-
-| Tipo de Secreto | Patrón / Formato | Severidad | Entropía Min |
-| :--- | :--- | :--- | :--- |
-| **AWS Secret Access Key** | 40 caracteres base64 (`[A-Za-z0-9/+=]{40}`) | Critical | 3.5 |
-| **Claves Privadas** | `-----BEGIN (RSA\|EC\|OPENSSH\|PGP) PRIVATE KEY-----` | Critical | 0.0 |
+| Secret type | Pattern / format | Severity | Min entropy |
+|---|---|---|---|
+| **AWS Secret Access Key** | 40 base64 characters (`[A-Za-z0-9/+=]{40}`) | Critical | 3.5 |
+| **Private keys** | `-----BEGIN (RSA\|EC\|OPENSSH\|PGP) PRIVATE KEY-----` | Critical | 0.0 |
 | **GitHub PAT** | `ghp_...`, `github_pat_...`, `ghu_...` | High | 3.3 |
 | **GCP API Key** | `AIza[0-9A-Za-z\-_]{35}` | High | 3.2 |
-| **Slack Token** | `xoxb-...`, `xoxp-...`, `xoxa-...` | High | 2.8 |
-| **Stripe API Key** | `sk_live_...`, `rk_live_...` | High | 3.0 |
-| **OpenAI API Key** | `sk-...`, `sk-proj-...` | High | 3.5 |
-| **JSON Web Token** | `ey...ey...` (3 segmentos base64url) | Medium | 3.5 |
-| **Generic API Key** | Tokens de alta entropía asignados a variables clave | Medium | 3.5 |
+| **Slack token** | `xoxb-...`, `xoxp-...`, `xoxa-...` | High | 2.8 |
+| **Stripe API key** | `sk_live_...`, `rk_live_...` | High | 3.0 |
+| **OpenAI API key** | `sk-...`, `sk-proj-...` | High | 3.5 |
+| **JSON Web Token** | `ey...ey...` (3 base64url segments) | Medium | 3.5 |
+| **Generic API key** | High-entropy tokens assigned to key variables | Medium | 3.5 |
 
----
+&nbsp;
 
-## 📄 Licencia
+## 🧪 Testing and quality
 
-Distribuido bajo la Licencia MIT. Consulta `LICENSE` para más información.
+```bash
+pytest tests/ --cov=src --cov-fail-under=85   # full suite with coverage
+ruff check .                                   # style and static rules
+mypy src tests                                 # strict typing
+pip-audit                                      # dependencies against the CVE database
+```
+
+&nbsp;
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/catppuccin/catppuccin/main/assets/footers/gray0_ctp_on_line.svg?sanitize=true" alt=""/>
+</p>
+
+<p align="center">
+  Copyright © 2026 <a href="https://github.com/h3n-x">h3n-x</a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/h3n-x/repo-secret-auditor/blob/main/LICENSE"><img src="https://img.shields.io/static/v1?style=for-the-badge&message=MIT&logoColor=d9e0ee&label=License&labelColor=363a4f&color=a6e3a1" alt="MIT License"/></a>
+</p>
